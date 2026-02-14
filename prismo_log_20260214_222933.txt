@@ -1,0 +1,4 @@
+[22:29:28] RUN: auto
+[22:29:28] Available actions:
+[22:29:28] hello - Test action to verify the system works
+[22:29:28] semester - Manage semester-related tasks
