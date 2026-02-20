@@ -10,5 +10,11 @@
         "path": "C:/Users/Lenovo/Desktop/Projects/Project Tarsh",
         "default_ide": "Visual Studio",
         "snapshot": ""
+    },
+    {
+        "name": "Automate",
+        "path": "C:/Users/Lenovo/Desktop/Projects/Automate",
+        "default_ide": "File Explorer",
+        "snapshot": ""
     }
 ]
