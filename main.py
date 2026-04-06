@@ -116,7 +116,7 @@ class PrismoMainWindow(QMainWindow):
         main_layout.addLayout(body_layout)
 
         # Start on Terminal View
-        self.switch_view(2)
+        self.switch_view(0)
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_stats)
