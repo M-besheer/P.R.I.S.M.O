@@ -1,12 +1,20 @@
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool  # <--- NEW IMPORT
+
 from Backend.main import app
 from Backend.database import get_db, Base
 
-# 1. Setup an IN-MEMORY SQLite database (it only exists in RAM during the test)
+# 1. Setup an IN-MEMORY SQLite database
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+
+# Tell SQLAlchemy to use a single connection for the whole test (StaticPool)
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool  # <--- NEW ARGUMENT
+)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Create all tables in the temporary database
@@ -38,7 +46,6 @@ def test_read_root():
 def test_create_and_get_project():
     new_project = {"name": "CI Test Project", "path": "C:/test/fake/path"}
 
-    # This will now work 1,000 times in a row because the DB is wiped every time!
     post_res = client.post("/projects/", json=new_project)
     assert post_res.status_code == 200
 
