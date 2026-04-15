@@ -1,139 +1,193 @@
 import os
-import json
 import sys
 import subprocess
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QScrollArea, QFrame, QLineEdit,
-                               QComboBox, QFileDialog, QInputDialog, QMessageBox)
-from PySide6.QtCore import Qt, Signal
+                               QComboBox, QFileDialog, QInputDialog, QMessageBox, QLayout, QSizePolicy)
+from PySide6.QtCore import Qt, Signal, QRect, QSize, QPoint
 from PySide6.QtGui import QFont, QDesktopServices
 from PySide6.QtCore import QUrl
 
-# --- CONFIG FILES & CONSTANTS ---
+# Import the new API Connection
+from Frontend.APIs_Conn import PrismoAPI
+
+# --- THEME CONSTANTS ---
 ACCENT = "#00ECFF"
 BG_PANEL = "#010101"
-TEXT_DIM = "#444444"
+TEXT_DIM = "#555555"
 MONO_FONT = "Consolas"
 
-PROJECTS_FILE = "projects.json"
-IDE_CONFIG_FILE = "ide_paths.json"
 
-SUPPORTED_IDES = [
-    "File Explorer",
-    "VS Code",
-    "Visual Studio",
-    "IntelliJ IDEA",
-    "PyCharm",
-    "Eclipse",
-    "Arduino",
-    "IAR Embedded Workbench",
-    "Cursor"
-]
+# ==========================================
+# CUSTOM FLOW LAYOUT (For auto-wrapping cards)
+# ==========================================
+class FlowLayout(QLayout):
+    def __init__(self, parent=None, margin=10, spacing=15):
+        super().__init__(parent)
+        self.setContentsMargins(margin, margin, margin, margin)
+        self.setSpacing(spacing)
+        self.itemList = []
+
+    def __del__(self):
+        item = self.takeAt(0)
+        while item: item = self.takeAt(0)
+
+    def addItem(self, item):
+        self.itemList.append(item)
+
+    def count(self):
+        return len(self.itemList)
+
+    def itemAt(self, index):
+        if 0 <= index < len(self.itemList): return self.itemList[index]
+        return None
+
+    def takeAt(self, index):
+        if 0 <= index < len(self.itemList): return self.itemList.pop(index)
+        return None
+
+    def expandingDirections(self):
+        return Qt.Orientations(Qt.Orientation(0))
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self.doLayout(QRect(0, 0, width, 0), True)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self.doLayout(rect, False)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        size = QSize()
+        for item in self.itemList:
+            size = size.expandedTo(item.minimumSize())
+        size += QSize(2 * self.contentsMargins().top(), 2 * self.contentsMargins().top())
+        return size
+
+    def doLayout(self, rect, testOnly):
+        x, y, line_height = rect.x(), rect.y(), 0
+        for item in self.itemList:
+            wid = item.widget()
+            space_x = self.spacing()
+            space_y = self.spacing()
+            next_x = x + item.sizeHint().width() + space_x
+            if next_x - space_x > rect.right() and line_height > 0:
+                x = rect.x()
+                y = y + line_height + space_y
+                next_x = x + item.sizeHint().width() + space_x
+                line_height = 0
+            if not testOnly:
+                item.setGeometry(QRect(QPoint(x, y), item.sizeHint()))
+            x = next_x
+            line_height = max(line_height, item.sizeHint().height())
+        return y + line_height - rect.y()
 
 
+# ==========================================
+# THE PROJECT CARD WIDGET
+# ==========================================
 class ProjectCard(QFrame):
-    """The visual HUD card for a single project."""
-
-    def __init__(self, index, data, plugin_ref):
+    def __init__(self, db_data, plugin_ref, available_ides):
         super().__init__()
-        self.index = index
-        self.data = data
+        self.data = db_data
         self.plugin = plugin_ref
 
+        # Fixed size for uniform grid wrapping
+        self.setFixedSize(320, 160)
+
+        # Sleek CSS styling
         self.setStyleSheet(f"""
-            QFrame {{ background-color: #050505; border: 1px solid #222; border-left: 3px solid {ACCENT}; border-radius: 5px; margin-bottom: 10px; }}
-            QFrame:hover {{ background-color: #0A0A0A; border-left: 4px solid {ACCENT}; }}
+            ProjectCard {{
+                background-color: #0A0A0C;
+                border: 1px solid #1A1A1D;
+                border-top: 3px solid {ACCENT};
+                border-radius: 8px;
+            }}
+            ProjectCard:hover {{
+                background-color: #111115;
+                border: 1px solid {ACCENT};
+            }}
         """)
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(15, 10, 15, 10)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(15, 15, 15, 15)
 
-        # --- 1. INFO & SNAPSHOT (Left Side) ---
-        info_frame = QVBoxLayout()
+        # --- HEADER (Title & Status) ---
+        header_layout = QHBoxLayout()
 
-        title = QLabel(data["name"].upper())
-        title.setStyleSheet(f"color: {ACCENT}; font-weight: bold; font-size: 16px; border: none;")
-        title.setFont(QFont("Arial", 12, QFont.Bold))
+        title = QLabel(self.data["name"])
+        title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        title.setStyleSheet(f"color: white; border: none; background: transparent;")
 
-        display_path = self.truncate_path(data["path"])
+        # Active Status Dot
+        status_dot = QLabel("●" if self.data.get("is_active", True) else "○")
+        color = "#00FF41" if self.data.get("is_active", True) else TEXT_DIM
+        status_dot.setStyleSheet(f"color: {color}; font-size: 16px; border: none; background: transparent;")
+
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        header_layout.addWidget(status_dot)
+
+        # --- PATH DISPLAY ---
+        display_path = self.truncate_path(self.data["path"])
         path_lbl = QLabel(display_path)
-        path_lbl.setStyleSheet("color: #888888; border: none;")
-        path_lbl.setFont(QFont(MONO_FONT, 10))
+        path_lbl.setFont(QFont(MONO_FONT, 9))
+        path_lbl.setStyleSheet("color: #888; border: none; background: transparent;")
 
-        # The Snapshot Input (Auto-saves when you click away or hit enter)
-        self.snapshot_input = QLineEdit(data.get("snapshot", ""))
-        self.snapshot_input.setPlaceholderText("Dev Snapshot: What were you working on last?")
-        self.snapshot_input.setStyleSheet(
-            f"background-color: #010201; color: #00FF41; border: 1px solid #113311; padding: 4px;")
-        self.snapshot_input.setFont(QFont(MONO_FONT, 9))
-        self.snapshot_input.editingFinished.connect(self.save_snapshot)
-
-        info_frame.addWidget(title)
-        info_frame.addWidget(path_lbl)
-        info_frame.addWidget(self.snapshot_input)
-
-        # --- 2. CONTROLS (Right Side) ---
-        ctrl_frame = QHBoxLayout()
-        ctrl_frame.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
-        # IDE Dropdown
+        # --- IDE SELECTION ---
         self.ide_combo = QComboBox()
-        self.ide_combo.addItems(SUPPORTED_IDES)
-        self.ide_combo.setCurrentText(data.get("default_ide", "File Explorer"))
-        self.ide_combo.setStyleSheet(f"""
-            QComboBox {{ background-color: #030303; color: white; border: 1px solid #222; padding: 4px; font-family: {MONO_FONT}; width: 150px;}}
-            QComboBox QAbstractItemView {{ background-color: #030303; color: {ACCENT}; }}
-        """)
-        self.ide_combo.currentTextChanged.connect(self.update_ide)
+        self.ide_combo.addItem("File Explorer")
+        for ide in available_ides:
+            self.ide_combo.addItem(ide["name"])
 
-        # Open Button (External Launch)
+        self.ide_combo.setStyleSheet(f"""
+            QComboBox {{ background-color: #050505; color: white; border: 1px solid #222; padding: 4px; border-radius: 4px; }}
+            QComboBox::drop-down {{ border: none; }}
+        """)
+
+        # --- BUTTONS (Bottom Row) ---
+        btn_layout = QHBoxLayout()
+
         btn_open = QPushButton("OPEN")
         btn_open.setCursor(Qt.PointingHandCursor)
         btn_open.setStyleSheet(
-            f"background-color: {ACCENT}; color: black; font-weight: bold; padding: 6px 15px; border-radius: 3px;")
+            f"background-color: {ACCENT}; color: black; font-weight: bold; border-radius: 4px; padding: 5px;")
         btn_open.clicked.connect(self.launch_ide)
 
-        # Terminal Button (Internal PRISMO Tab)
         btn_term = QPushButton(">_")
         btn_term.setCursor(Qt.PointingHandCursor)
         btn_term.setStyleSheet(
-            f"background-color: transparent; color: white; border: 1px solid {TEXT_DIM}; padding: 6px 10px; font-weight: bold;")
+            "background-color: #1A1A1D; color: white; font-weight: bold; border-radius: 4px; padding: 5px;")
         btn_term.clicked.connect(self.launch_terminal)
 
-        # Delete Button
-        btn_del = QPushButton("X")
+        btn_del = QPushButton("×")
         btn_del.setCursor(Qt.PointingHandCursor)
         btn_del.setStyleSheet(
-            "background-color: transparent; color: #FF4444; border: 1px solid #FF4444; padding: 6px 10px; font-weight: bold;")
-        btn_del.clicked.connect(lambda: self.plugin.remove_project(self.index))
+            "background-color: #1A1A1D; color: #FF4444; font-weight: bold; border-radius: 4px; padding: 5px; width: 25px;")
+        btn_del.clicked.connect(self.delete_self)
 
-        ctrl_frame.addWidget(self.ide_combo)
-        ctrl_frame.addWidget(btn_open)
-        ctrl_frame.addWidget(btn_term)
-        ctrl_frame.addWidget(btn_del)
+        btn_layout.addWidget(btn_open, stretch=1)
+        btn_layout.addWidget(btn_term)
+        btn_layout.addWidget(btn_del)
 
-        layout.addLayout(info_frame, stretch=1)
-        layout.addSpacing(20)
-        layout.addLayout(ctrl_frame)
+        # Assemble Card
+        layout.addLayout(header_layout)
+        layout.addWidget(path_lbl)
+        layout.addStretch()
+        layout.addWidget(self.ide_combo)
+        layout.addLayout(btn_layout)
 
-    def truncate_path(self, path, max_chars=50):
+    def truncate_path(self, path, max_chars=35):
         if len(path) <= max_chars: return path
-        head, tail = os.path.split(path)
-        parent = os.path.basename(head)
-        short_path = f".../{parent}/{tail}"
-        if len(short_path) > max_chars: return "..." + path[-(max_chars - 3):]
-        return short_path
-
-    def save_snapshot(self):
-        self.data["snapshot"] = self.snapshot_input.text().strip()
-        self.plugin.save_projects()
-
-    def update_ide(self, new_ide):
-        self.data["default_ide"] = new_ide
-        self.plugin.save_projects()
+        return "..." + path[-(max_chars - 3):]
 
     def launch_ide(self):
-        ide_name = self.data.get("default_ide", "File Explorer")
+        ide_name = self.ide_combo.currentText()
         path = self.data["path"]
 
         if ide_name == "File Explorer":
@@ -143,97 +197,114 @@ class ProjectCard(QFrame):
                 QDesktopServices.openUrl(QUrl.fromLocalFile(path))
             return
 
-        exe_path = self.plugin.get_ide_executable(ide_name)
+        exe_path = self.plugin.get_ide_path(ide_name)
         if exe_path:
             try:
-                # Launch the IDE as a completely detached external process
                 subprocess.Popen([exe_path, path])
             except Exception as e:
                 QMessageBox.critical(self, "Execution Error", str(e))
 
     def launch_terminal(self):
-        # Emits the path back to main.py to open in PRISMO's internal terminal!
         self.plugin.launch_request.emit(self.data["path"], "", "")
 
+    def delete_self(self):
+        # Call Backend to Delete
+        success = PrismoAPI.delete_project(self.data["id"])
+        if success:
+            self.plugin.load_data()  # Refresh the UI
 
+
+# ==========================================
+# THE MAIN PLUGIN WIDGET
+# ==========================================
 class ProjectsPlugin(QWidget):
     launch_request = Signal(str, str, str)
 
     def __init__(self):
         super().__init__()
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(15, 15, 15, 15)
+        self.layout.setContentsMargins(20, 20, 20, 20)
+        self.layout.setSpacing(20)
 
-        # --- HEADER ---
+        # --- HEADER & SEARCH BAR ---
         header_layout = QHBoxLayout()
 
-        btn_reset = QPushButton("RESET PATHS")
-        btn_reset.setCursor(Qt.PointingHandCursor)
-        btn_reset.setStyleSheet(
-            f"background-color: transparent; color: {TEXT_DIM}; border: 1px solid {TEXT_DIM}; padding: 6px 15px; font-weight: bold;")
-        btn_reset.clicked.connect(self.reset_ide_paths)
+        self.search_bar = QLineEdit()
+        self.search_bar.setPlaceholderText("🔍 Search projects by name or path...")
+        self.search_bar.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: #0A0A0C; color: white;
+                border: 1px solid #222; border-radius: 15px;
+                padding: 8px 15px; font-size: 14px;
+            }}
+            QLineEdit:focus {{ border: 1px solid {ACCENT}; }}
+        """)
+        self.search_bar.textChanged.connect(self.filter_projects)
 
         btn_new = QPushButton("+ NEW PROJECT")
         btn_new.setCursor(Qt.PointingHandCursor)
-        btn_new.setStyleSheet(
-            "background-color: #2CC985; color: white; font-weight: bold; padding: 6px 15px; border-radius: 15px;")
+        btn_new.setStyleSheet(f"""
+            QPushButton {{ background-color: #2CC985; color: black; font-weight: bold; padding: 8px 20px; border-radius: 15px; }}
+            QPushButton:hover {{ background-color: #35E89A; }}
+        """)
         btn_new.clicked.connect(self.add_new_project)
 
-        header_layout.addStretch()
-        header_layout.addWidget(btn_reset)
+        header_layout.addWidget(self.search_bar, stretch=1)
+        header_layout.addSpacing(20)
         header_layout.addWidget(btn_new)
 
-        # --- SCROLL AREA ---
+        # --- SCROLL AREA & FLOW LAYOUT ---
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setStyleSheet("QScrollArea { border: none; background-color: transparent; }")
 
         self.cards_container = QWidget()
-        self.cards_layout = QVBoxLayout(self.cards_container)
-        self.cards_layout.setAlignment(Qt.AlignTop)
+        self.cards_container.setStyleSheet("background-color: transparent;")
+
+        # Use our custom FlowLayout!
+        self.flow_layout = FlowLayout(self.cards_container)
         self.scroll_area.setWidget(self.cards_container)
 
         self.layout.addLayout(header_layout)
         self.layout.addWidget(self.scroll_area)
 
-        self.projects = []
-        self.ide_paths = {}
+        # State Variables
+        self.all_projects = []
+        self.available_ides = []
+        self.card_widgets = []
+
         self.load_data()
 
-    # --- DATA HANDLING ---
     def load_data(self):
-        if os.path.exists(PROJECTS_FILE):
-            try:
-                with open(PROJECTS_FILE, "r") as f:
-                    self.projects = json.load(f)
-            except:
-                self.projects = []
+        """Fetches fresh data from FastAPI and renders it."""
+        self.all_projects = PrismoAPI.get_projects()
+        self.available_ides = PrismoAPI.get_ides()
+        self.render_cards(self.all_projects)
 
-        if os.path.exists(IDE_CONFIG_FILE):
-            try:
-                with open(IDE_CONFIG_FILE, "r") as f:
-                    self.ide_paths = json.load(f)
-            except:
-                self.ide_paths = {}
+    def render_cards(self, projects_to_show):
+        """Clears the grid and draws the cards."""
+        # Clear existing widgets
+        for widget in self.card_widgets:
+            self.flow_layout.removeWidget(widget)
+            widget.deleteLater()
+        self.card_widgets.clear()
 
-        self.refresh_ui()
+        # Draw new widgets
+        for proj_data in projects_to_show:
+            card = ProjectCard(proj_data, self, self.available_ides)
+            self.flow_layout.addWidget(card)
+            self.card_widgets.append(card)
 
-    def save_projects(self):
-        with open(PROJECTS_FILE, "w") as f: json.dump(self.projects, f, indent=4)
+    def filter_projects(self, text):
+        """Filters the cards based on the search bar text."""
+        query = text.lower()
+        filtered = [
+            p for p in self.all_projects
+            if query in p["name"].lower() or query in p["path"].lower()
+        ]
+        self.render_cards(filtered)
 
-    def save_ide_paths(self):
-        with open(IDE_CONFIG_FILE, "w") as f: json.dump(self.ide_paths, f, indent=4)
-
-    def reset_ide_paths(self):
-        reply = QMessageBox.question(self, "Reset Paths", "Forget all saved IDE executable locations?",
-                                     QMessageBox.Yes | QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            self.ide_paths = {}
-            self.save_ide_paths()
-
-    # --- ACTIONS ---
     def add_new_project(self):
-        # Pops open your OS file explorer to pick the folder!
         path = QFileDialog.getExistingDirectory(self, "Select Project Directory")
         if not path: return
 
@@ -241,53 +312,26 @@ class ProjectsPlugin(QWidget):
         name, ok = QInputDialog.getText(self, "New Project", "Enter Project Name:", QLineEdit.Normal, default_name)
 
         if ok and name:
-            self.projects.append({
-                "name": name,
-                "path": path,
-                "default_ide": "File Explorer",
-                "snapshot": ""
-            })
-            self.save_projects()
-            self.refresh_ui()
+            # Send to FastAPI Backend!
+            result = PrismoAPI.create_project(name, path)
+            if result:
+                self.search_bar.clear()
+                self.load_data()  # Refresh UI
+            else:
+                QMessageBox.warning(self, "API Error", "Could not save project. Is the backend running?")
 
-    def remove_project(self, index):
-        del self.projects[index]
-        self.save_projects()
-        self.refresh_ui()
+    def get_ide_path(self, ide_name):
+        """Finds the executable path from the backend IDEs list."""
+        for ide in self.available_ides:
+            if ide["name"] == ide_name:
+                return ide["path"]
 
-    def get_ide_executable(self, ide_name):
-        # 1. Check if we already know the path
-        if ide_name in self.ide_paths and os.path.exists(self.ide_paths[ide_name]):
-            return self.ide_paths[ide_name]
-
-        # 2. If not, ask the user to find the .exe
-        QMessageBox.information(self, "Configure IDE",
-                                f"Executable for '{ide_name}' not found.\nPlease locate the .exe file.")
-
+        # If it's a new IDE, ask the user to find it
         exe_path, _ = QFileDialog.getOpenFileName(self, f"Select {ide_name} Executable", "",
                                                   "Executables (*.exe);;All Files (*.*)")
-
-        # 3. Save it forever
         if exe_path:
-            self.ide_paths[ide_name] = exe_path
-            self.save_ide_paths()
+            PrismoAPI.add_ide(ide_name, exe_path)
+            self.load_data()  # Refresh to get the new IDE
             return exe_path
 
         return None
-
-    # --- UI RENDERING ---
-    def refresh_ui(self):
-        for i in reversed(range(self.cards_layout.count())):
-            widget = self.cards_layout.itemAt(i).widget()
-            if widget: widget.setParent(None)
-
-        if not self.projects:
-            empty_lbl = QLabel("No projects tracked. Click '+ NEW PROJECT' to begin.")
-            empty_lbl.setStyleSheet("color: #555555; font-size: 16px;")
-            empty_lbl.setAlignment(Qt.AlignCenter)
-            self.cards_layout.addWidget(empty_lbl)
-            return
-
-        for i, proj in enumerate(self.projects):
-            card = ProjectCard(i, proj, self)
-            self.cards_layout.addWidget(card)
