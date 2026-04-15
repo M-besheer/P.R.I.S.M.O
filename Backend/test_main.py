@@ -15,7 +15,7 @@ def test_read_root():
 def test_create_and_get_project():
     """Test creating a project and retrieving it"""
     # 1. Create a project
-    new_project = {"name": "CI/CD Test Project", "path": "/test/path"}
+    new_project = {"name": "CI/CD Test Project", "path": "/test/path/new_project/new"}
     response = client.post("/projects/", json=new_project)
 
     assert response.status_code == 200
