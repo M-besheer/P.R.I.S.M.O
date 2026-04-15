@@ -1,0 +1,31 @@
+name: Backend API Tests
+
+# Trigger this workflow every time code is pushed to the 'main' branch
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest # GitHub provides a free Linux server
+
+    steps:
+    - name: 📥 Check out repository code
+      uses: actions/checkout@v3
+
+    - name: 🐍 Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: 🧪 Run Pytest
+      run: |
+        # Set the python path so it can find the Backend module
+        PYTHONPATH=. pytest Backend/

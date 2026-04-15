@@ -4,13 +4,13 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                                QHBoxLayout, QLabel, QPushButton, QTabWidget, QFrame,
                                QStackedWidget, QMenu, QSystemTrayIcon,QStyle)
 from PySide6.QtCore import QTimer
-from PySide6.QtGui import QFont, QAction, QIcon
+from PySide6.QtGui import QFont, QAction
 
-from Plugins.Projects import ProjectsPlugin
+from Frontend.Plugins.Projects import ProjectsPlugin
 # Import the Plugins
-from Plugins.Terminal import TerminalTab, SHELL_CONFIGS, MONO_FONT
-from Plugins.Directory import DirectoryPlugin
-from Plugins.LMS import LMSPlugin # <--- NEW: Academic Matrix
+from Frontend.Plugins.Terminal import TerminalTab, SHELL_CONFIGS, MONO_FONT
+from Frontend.Plugins.Directory import DirectoryPlugin
+from Frontend.Plugins.LMS import LMSPlugin # <--- NEW: Academic Matrix
 
 # --- THEME CONSTANTS ---
 ACCENT = "#00ECFF"
