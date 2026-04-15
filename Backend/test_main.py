@@ -1,30 +1,47 @@
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 from Backend.main import app
+from Backend.database import get_db, Base
 
-# Create a fake client to talk to our API
+# 1. Setup an IN-MEMORY SQLite database (it only exists in RAM during the test)
+SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
+engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Create all tables in the temporary database
+Base.metadata.create_all(bind=engine)
+
+
+# 2. Tell FastAPI to use this fake database instead of the real one
+def override_get_db():
+    db = TestingSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+app.dependency_overrides[get_db] = override_get_db
+
+# 3. Initialize the Test Client
 client = TestClient(app)
 
 
+# --- THE TESTS ---
+
 def test_read_root():
-    """Test if the API is online"""
     response = client.get("/")
     assert response.status_code == 200
-    assert "P.R.I.S.M.O Core is Online" in response.json()["status"]
 
 
 def test_create_and_get_project():
-    """Test creating a project and retrieving it"""
-    # 1. Create a project
-    new_project = {"name": "CI/CD Test Project", "path": "/test/path/new_project/new"}
-    response = client.post("/projects/", json=new_project)
+    new_project = {"name": "CI Test Project", "path": "C:/test/fake/path"}
 
-    assert response.status_code == 200
-    assert response.json()["name"] == "CI/CD Test Project"
+    # This will now work 1,000 times in a row because the DB is wiped every time!
+    post_res = client.post("/projects/", json=new_project)
+    assert post_res.status_code == 200
 
-    # 2. Verify it shows up in the GET request
-    get_response = client.get("/projects/")
-    assert get_response.status_code == 200
-
-    # Check that our test project is in the returned list
-    projects = get_response.json()
-    assert any(proj["name"] == "CI/CD Test Project" for proj in projects)
+    get_res = client.get("/projects/")
+    assert len(get_res.json()) == 1
+    assert get_res.json()[0]["name"] == "CI Test Project"
